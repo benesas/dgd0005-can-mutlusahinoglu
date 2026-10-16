@@ -1,0 +1,80 @@
+using System.Collections.Generic;
+using FishNet.Connection;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+public class PaddleController : NetworkBehaviour
+{
+    public readonly SyncVar<int> Side = new SyncVar<int>(2);
+    public static readonly List<PaddleController> All = new List<PaddleController>();
+    public static PaddleController Local { get; private set; }
+    [SerializeField] private float speed = 8f;
+
+    private void Awake() => Side.OnChange += SideChanged;
+    private void SideChanged(int previous, int next, bool asServer) => Place();
+    public static string SideName(int side) => side == 0 ? "LEFT" : side == 1 ? "RIGHT" : "SPECTATOR";
+    public override void OnStartServer()
+    {
+        if (!All.Contains(this)) All.Add(this);
+        bool left = false, right = false;
+        foreach (PaddleController paddle in All)
+        {
+            if (paddle == this || !paddle.IsServerInitialized) continue;
+            left |= paddle.Side.Value == 0;
+            right |= paddle.Side.Value == 1;
+        }
+        Side.Value = !left ? 0 : !right ? 1 : 2;
+        Place();
+        Debug.Log($"[Server] Client {OwnerId}: {SideName(Side.Value)}");
+        GameState.Announce($"Client {OwnerId} joined: {SideName(Side.Value)}");
+    }
+    public override void OnStartClient()
+    {
+        if (!All.Contains(this)) All.Add(this);
+        if (IsOwner)
+        {
+            Local = this;
+            Debug.Log($"[Client] I am client {OwnerId}, side {SideName(Side.Value)}");
+        }
+        Place();
+    }
+    public override void OnStopServer() => All.Remove(this);
+    public override void OnStopClient()
+    {
+        All.Remove(this);
+        if (Local == this) Local = null;
+    }
+    private void OnDestroy() => Side.OnChange -= SideChanged;
+    private void Place()
+    {
+        GetComponent<Renderer>().enabled = Side.Value < 2;
+        if (Side.Value >= 2) return;
+        transform.position = new Vector3(Side.Value == 0 ? -Court.PaddleX : Court.PaddleX, 0.5f, 0);
+        Court.Paint(gameObject, Side.Value == 0 ? new Color(0.30f, 0.68f, 1f) : new Color(1f, 0.65f, 0.30f));
+    }
+    private void Update()
+    {
+        if (!IsOwner) return;
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard == null || Side.Value >= 2) return;
+        float direction = 0;
+        if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) direction++;
+        if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) direction--;
+        transform.position += Vector3.forward * direction * speed * Time.deltaTime;
+        Court.ClampPaddle(transform);
+        if (keyboard.spaceKey.wasPressedThisFrame) RequestServe();
+    }
+    [ServerRpc]
+    public void RequestServe()
+    {
+        if (GameState.Instance == null || NetworkBall.Instance == null || Side.Value >= 2) return;
+        if (Side.Value != GameState.Instance.ServingSide.Value || NetworkBall.Instance.InPlay.Value) return;
+        NetworkBall.Instance.Serve(1 - Side.Value);
+    }
+    [ObserversRpc]
+    public void AnnounceGoal(int left, int right) => ConnectionHud.Flash($"{SideName(Side.Value)} scored! {left} : {right}");
+    [TargetRpc]
+    public void YouServe(NetworkConnection target) => ConnectionHud.Flash("YOU SERVE");
+}
