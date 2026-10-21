@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using FishNet.Connection;
 using FishNet.Object;
@@ -9,6 +10,10 @@ public class PaddleController : NetworkBehaviour
 {
     private const int Spectator = 2;
     private float _serverAxis;
+    private const double MinInputGap = 0.030;
+    private double _lastInputTime = -1;
+    public int RejectedInputs;
+    private Func<string> rejectedPanel;
     public readonly SyncVar<int> Side = new SyncVar<int>(2);
     public static readonly List<PaddleController> All = new List<PaddleController>();
     public static PaddleController Local { get; private set; }
@@ -23,6 +28,10 @@ public class PaddleController : NetworkBehaviour
     public override void OnStartServer()
     {
         _serverAxis = 0f;
+        _lastInputTime = -1;
+        RejectedInputs = 0;
+        rejectedPanel = () => $"Rejected inputs (paddle {OwnerId}): {RejectedInputs}";
+        ConnectionHud.Panels.Add(rejectedPanel);
         if (!All.Contains(this)) All.Add(this);
         bool left = false, right = false;
         foreach (PaddleController paddle in All)
@@ -46,7 +55,13 @@ public class PaddleController : NetworkBehaviour
         }
         Place();
     }
-    public override void OnStopServer() => All.Remove(this);
+    public override void OnStopServer()
+    {
+        ConnectionHud.Panels.Remove(rejectedPanel);
+        rejectedPanel = null;
+        _serverAxis = 0f;
+        All.Remove(this);
+    }
     public override void OnStopClient()
     {
         All.Remove(this);
@@ -92,6 +107,14 @@ public class PaddleController : NetworkBehaviour
         if (float.IsNaN(axis)) return;
         axis = Mathf.Clamp(axis, -1f, 1f);
         if (Side.Value == Spectator) return;
+        double now = TimeManager.TicksToTime(TimeManager.Tick);
+        if (_lastInputTime >= 0 && now - _lastInputTime < MinInputGap)
+        {
+            RejectedInputs++;
+            Debug.Log($"[Server] Rejected input from client {OwnerId}: too fast.");
+            return;
+        }
+        _lastInputTime = now;
         _serverAxis = axis;
     }
     [ServerRpc]
