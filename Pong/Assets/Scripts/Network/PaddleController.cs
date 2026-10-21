@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using FishNet.Connection;
+using FishNet.Component.Transforming;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using UnityEngine;
@@ -14,6 +15,7 @@ public class PaddleController : NetworkBehaviour
     private double _lastInputTime = -1;
     public int RejectedInputs;
     private Func<string> rejectedPanel;
+    private NetworkTransform networkTransform;
     public readonly SyncVar<int> Side = new SyncVar<int>(2);
     public static readonly List<PaddleController> All = new List<PaddleController>();
     public static PaddleController Local { get; private set; }
@@ -22,7 +24,11 @@ public class PaddleController : NetworkBehaviour
     public override void OnStartNetwork() => TimeManager.OnTick += OnTick;
     public override void OnStopNetwork() => TimeManager.OnTick -= OnTick;
 
-    private void Awake() => Side.OnChange += SideChanged;
+    private void Awake()
+    {
+        Side.OnChange += SideChanged;
+        networkTransform = GetComponent<NetworkTransform>();
+    }
     private void SideChanged(int previous, int next, bool asServer) => Place();
     public static string SideName(int side) => side == 0 ? "LEFT" : side == 1 ? "RIGHT" : "SPECTATOR";
     public override void OnStartServer()
@@ -81,6 +87,13 @@ public class PaddleController : NetworkBehaviour
         Keyboard keyboard = Keyboard.current;
         if (keyboard == null) return;
         if (keyboard.spaceKey.wasPressedThisFrame) RequestServe();
+        if (keyboard.cKey.wasPressedThisFrame)
+        {
+            for (int i = 0; i < 20; i++) ServerSetAxis(1f);
+        }
+        if (keyboard.xKey.wasPressedThisFrame) ServerSetAxis(50f);
+        if (keyboard.tKey.wasPressedThisFrame && NetworkBall.Instance != null)
+            transform.position = NetworkBall.Instance.transform.position;
     }
     private void OnTick()
     {
@@ -99,6 +112,7 @@ public class PaddleController : NetworkBehaviour
         {
             transform.position += Vector3.forward * _serverAxis * speed * (float)TimeManager.TickDelta;
             Court.ClampPaddle(transform);
+            networkTransform.ForceSend();
         }
     }
     [ServerRpc]
