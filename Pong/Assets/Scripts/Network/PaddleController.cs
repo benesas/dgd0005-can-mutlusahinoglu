@@ -89,6 +89,9 @@ public class PaddleController : NetworkBehaviour
     [ServerRpc]
     private void ServerSetAxis(float axis)
     {
+        if (float.IsNaN(axis)) return;
+        axis = Mathf.Clamp(axis, -1f, 1f);
+        if (Side.Value == Spectator) return;
         _serverAxis = axis;
     }
     [ServerRpc]
