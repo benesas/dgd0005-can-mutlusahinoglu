@@ -7,16 +7,22 @@ using UnityEngine.InputSystem;
 
 public class PaddleController : NetworkBehaviour
 {
+    private const int Spectator = 2;
+    private float _serverAxis;
     public readonly SyncVar<int> Side = new SyncVar<int>(2);
     public static readonly List<PaddleController> All = new List<PaddleController>();
     public static PaddleController Local { get; private set; }
     [SerializeField] private float speed = 8f;
+
+    public override void OnStartNetwork() => TimeManager.OnTick += OnTick;
+    public override void OnStopNetwork() => TimeManager.OnTick -= OnTick;
 
     private void Awake() => Side.OnChange += SideChanged;
     private void SideChanged(int previous, int next, bool asServer) => Place();
     public static string SideName(int side) => side == 0 ? "LEFT" : side == 1 ? "RIGHT" : "SPECTATOR";
     public override void OnStartServer()
     {
+        _serverAxis = 0f;
         if (!All.Contains(this)) All.Add(this);
         bool left = false, right = false;
         foreach (PaddleController paddle in All)
@@ -58,13 +64,32 @@ public class PaddleController : NetworkBehaviour
     {
         if (!IsOwner) return;
         Keyboard keyboard = Keyboard.current;
-        if (keyboard == null || Side.Value >= 2) return;
-        float direction = 0;
-        if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) direction++;
-        if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) direction--;
-        transform.position += Vector3.forward * direction * speed * Time.deltaTime;
-        Court.ClampPaddle(transform);
+        if (keyboard == null) return;
         if (keyboard.spaceKey.wasPressedThisFrame) RequestServe();
+    }
+    private void OnTick()
+    {
+        if (IsOwner && Side.Value != Spectator)
+        {
+            float axis = 0f;
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) axis++;
+                if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) axis--;
+            }
+            ServerSetAxis(axis);
+        }
+        if (IsServerInitialized)
+        {
+            transform.position += Vector3.forward * _serverAxis * speed * (float)TimeManager.TickDelta;
+            Court.ClampPaddle(transform);
+        }
+    }
+    [ServerRpc]
+    private void ServerSetAxis(float axis)
+    {
+        _serverAxis = axis;
     }
     [ServerRpc]
     public void RequestServe()
